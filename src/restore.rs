@@ -9,6 +9,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use std::{path::Path, path::PathBuf, time::Instant};
+use serde_json::Value;
 
 pub(crate) fn restore_main(params: &Restore) -> BoxedError {
     debug!("# RESTORE {:?}", params);
@@ -110,7 +111,7 @@ fn unzip_archives_and_send(params: &Restore, found: &[PathBuf]) -> BoxedResult<u
             pool.builder()
                 .name(thread_name)
                 .spawn(move |_| {
-                    start_indexing_docs(writer, &url, consumer, updater, &arcerr, merr, delay);
+                    start_indexing_docs(params, writer, &url, consumer, updater, &arcerr, merr, delay);
                     debug!("Finished writer #{}", writer);
                 })
                 .unwrap();
@@ -230,6 +231,7 @@ fn handle_reading_archive(
 }
 
 fn start_indexing_docs(
+    params: &Restore, 
     writer: u64, url: &str, consumer: Receiver<Docs>, progress: Sender<u64>,
     error_count: &Arc<AtomicU64>, max_errors: u64, delay: u64,
 ) {
@@ -241,9 +243,31 @@ fn start_indexing_docs(
         if received.is_err() || ctrl_c.aborted() {
             break;
         }
-        let docs = received.unwrap();
-        let failed =
-            send_to_solr(docs, writer, url, &mut client, &progress, error_count, max_errors);
+
+        let mut data = received.unwrap();
+        let mut json: serde_json::Value = serde_json::from_str(&data.json).unwrap();
+
+        if params.dossier.is_some() && params.dossier.as_ref().unwrap() != "" {
+            let dossier_id = params.dossier.as_ref().unwrap().to_string();
+            if let Some(docs) = json.as_array_mut() {
+                for obj in docs {
+                    if let Some(doc) = obj.as_object_mut() {
+
+                        let md5 = &doc["md5_content"].as_str().unwrap();
+                        let id_value = format!("{dossier_id}!{md5}");
+
+                        doc.insert("id".to_string(), Value::String(id_value));
+                        doc.insert("dossier".to_string(), Value::String(dossier_id.clone()));
+                    }
+                }
+            }
+
+            data.json = serde_json::to_string(&json).unwrap();
+
+        }
+
+        let failed = 
+            send_to_solr(data, writer, url, &mut client, &progress, error_count, max_errors);
         if failed || ctrl_c.aborted() {
             break;
         } else if delay > 0 {
