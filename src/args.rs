@@ -174,7 +174,7 @@ pub(crate) struct Restore {
     pub order: SortOrder,
 
     /// Optional dossier for creating the document id's
-    #[arg(long, display_order = 72, default_value = "none")]
+    #[arg(long, display_order = 72)]
     pub dossier: Option<String>,
 
     #[command(flatten)]
